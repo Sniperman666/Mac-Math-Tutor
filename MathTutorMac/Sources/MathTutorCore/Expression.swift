@@ -1,6 +1,6 @@
 import Foundation
 
-public indirect enum MathExpression: Equatable, Sendable {
+public indirect enum MathExpression: Equatable {
     case number(Double)
     case variable(String)
     case unary(String, MathExpression)
@@ -222,7 +222,7 @@ public indirect enum MathExpression: Equatable, Sendable {
     }
 }
 
-public enum AngleUnit: Sendable {
+public enum AngleUnit {
     case radians
     case degrees
 }

@@ -10,19 +10,20 @@ struct MathTutorApp: App {
             ContentView()
                 .environmentObject(viewModel)
         }
-        .windowStyle(.automatic)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Problem") {
                     viewModel.reset()
                 }
                 .keyboardShortcut("n")
+                .disabled(viewModel.isWorking)
             }
             CommandGroup(after: .pasteboard) {
                 Button("Paste Problem") {
                     viewModel.pasteProblem()
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(viewModel.isWorking)
             }
         }
     }

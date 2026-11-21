@@ -7,6 +7,7 @@ Enter a supported problem and select **Solve and explain** to see its answer and
 ## macOS requirement
 
 - Runs on **macOS Big Sur 11 or newer**.
+- Building requires **Xcode 12.5 or newer** (Swift 5.4 or newer).
 - Supports typed or pasted problems, image import, and handwritten input on a trackpad, mouse, or compatible stylus.
 - Apple Vision performs image and handwriting recognition locally.
 - Problems are not uploaded to a remote service.
@@ -14,6 +15,8 @@ Enter a supported problem and select **Solve and explain** to see its answer and
 ## Run
 
 Open `Package.swift` in Xcode on a Mac, select the `MathTutorMac` executable, and run it.
+If multiple Xcode versions are installed, select Xcode 12.5 or newer in Xcode's
+**Settings/Preferences > Locations > Command Line Tools** before using Terminal.
 
 To build an unsigned `.app` bundle from Terminal:
 

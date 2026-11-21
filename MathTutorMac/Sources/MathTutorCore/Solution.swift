@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SolutionStep: Identifiable, Equatable, Sendable {
+public struct SolutionStep: Identifiable, Equatable {
     public let id: UUID
     public let title: String
     public let explanation: String
@@ -14,7 +14,7 @@ public struct SolutionStep: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct MathSolution: Identifiable, Equatable, Sendable {
+public struct MathSolution: Identifiable, Equatable {
     public let id: UUID
     public let originalProblem: String
     public let subject: String

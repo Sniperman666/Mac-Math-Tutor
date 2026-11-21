@@ -19,15 +19,15 @@ enum MathRecognitionError: LocalizedError {
 }
 
 struct MathImageRecognizer {
-    func recognizeText(in url: URL) async throws -> String {
+    func recognizeText(in url: URL) throws -> String {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0) else {
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw MathRecognitionError.unreadableImage
         }
-        return try await recognize(image)
+        return try recognize(image)
     }
 
-    func recognizeText(in strokes: [[CGPoint]], size: CGSize) async throws -> String {
+    func recognizeText(in strokes: [[CGPoint]], size: CGSize) throws -> String {
         guard size.width > 0, size.height > 0 else { throw MathRecognitionError.noText }
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -59,37 +59,22 @@ struct MathImageRecognizer {
             context.strokePath()
         }
         guard let image = context.makeImage() else { throw MathRecognitionError.unreadableImage }
-        return try await recognize(image)
+        return try recognize(image)
     }
 
-    private func recognize(_ image: CGImage) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                let observations = (request.results as? [VNRecognizedTextObservation] ?? [])
-                let text = observations
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.isEmpty {
-                    continuation.resume(throwing: MathRecognitionError.noText)
-                } else {
-                    continuation.resume(returning: text)
-                }
-            }
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = false
-            request.recognitionLanguages = ["en-US"]
-            request.customWords = ["sin", "cos", "tan", "sqrt", "integral", "derivative", "mean", "median"]
-            let handler = VNImageRequestHandler(cgImage: image)
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
+    private func recognize(_ image: CGImage) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["en-US"]
+        request.customWords = ["sin", "cos", "tan", "sqrt", "integral", "derivative", "mean", "median"]
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let observations = request.results as? [VNRecognizedTextObservation] ?? []
+        let text = observations
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw MathRecognitionError.noText }
+        return text
     }
 }

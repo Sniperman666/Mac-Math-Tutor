@@ -45,7 +45,7 @@ struct HandwritingPad: View {
                 }
                 Spacer()
                 Button("Recognize handwriting") {
-                    Task { await viewModel.recognizeDrawing(strokes, size: canvasSize) }
+                    viewModel.recognizeDrawing(strokes, size: canvasSize)
                 }
                 .buttonStyle(DefaultButtonStyle())
                 .disabled(strokes.isEmpty || viewModel.isWorking)

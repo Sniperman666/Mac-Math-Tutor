@@ -3,7 +3,6 @@ import Foundation
 import MathTutorCore
 import UniformTypeIdentifiers
 
-@MainActor
 final class TutorViewModel: ObservableObject {
     @Published var problem = ""
     @Published var solution: MathSolution?
@@ -16,7 +15,7 @@ final class TutorViewModel: ObservableObject {
     private let engine = MathTutorEngine()
     private let recognizer = MathImageRecognizer()
 
-    func solve() async {
+    func solve() {
         errorMessage = nil
         isWorking = true
         solution = nil
@@ -57,34 +56,47 @@ final class TutorViewModel: ObservableObject {
         recognitionNeedsReview = false
     }
 
-    func recognizeImage(at url: URL) async {
-        isWorking = true
-        errorMessage = nil
-        defer { isWorking = false }
-        do {
-            problem = try await recognizer.recognizeText(in: url)
-            recognitionNeedsReview = true
-            selectedInputMode = .type
-        } catch {
-            errorMessage = error.localizedDescription
+    func recognizeImage(at url: URL) {
+        guard !isWorking else { return }
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        let recognizer = self.recognizer
+        startRecognition {
+            defer {
+                if hasAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            return try recognizer.recognizeText(in: url)
         }
     }
 
-    func recognizeDrawing(_ strokes: [[CGPoint]], size: CGSize) async {
+    func recognizeDrawing(_ strokes: [[CGPoint]], size: CGSize) {
+        guard !isWorking else { return }
+        let recognizer = self.recognizer
+        startRecognition {
+            try recognizer.recognizeText(in: strokes, size: size)
+        }
+    }
+
+    private func startRecognition(_ work: @escaping () throws -> String) {
         isWorking = true
         errorMessage = nil
-        defer { isWorking = false }
-        do {
-            problem = try await recognizer.recognizeText(in: strokes, size: size)
-            recognitionNeedsReview = true
-            selectedInputMode = .type
-        } catch {
-            errorMessage = error.localizedDescription
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try work() }
+            DispatchQueue.main.async {
+                self.isWorking = false
+                switch result {
+                case .success(let text):
+                    self.problem = text
+                    self.recognitionNeedsReview = true
+                    self.selectedInputMode = .type
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 
     func copySolution() {
-        guard let solution else { return }
+        guard let solution = solution else { return }
         let steps = solution.steps.enumerated().map { index, step in
             "\(index + 1). \(step.title)\n   \(step.explanation)\n   \(step.expression)"
         }

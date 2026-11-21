@@ -12,6 +12,7 @@ struct ContentView: View {
         NavigationView {
             InputPanel(isImportingImage: $isImportingImage)
                 .frame(minWidth: 340)
+                .disabled(viewModel.isWorking)
             SolutionPanel()
         }
         .frame(minWidth: 920, minHeight: 640)
@@ -22,12 +23,13 @@ struct ContentView: View {
                 } label: {
                     Label("Import image", systemImage: "photo")
                 }
+                .disabled(viewModel.isWorking)
                 Button {
                     showHistory.toggle()
                 } label: {
                     Label("History", systemImage: "clock")
                 }
-                .disabled(viewModel.history.isEmpty)
+                .disabled(viewModel.history.isEmpty || viewModel.isWorking)
             }
         }
         .sheet(isPresented: $showHistory) {
@@ -41,7 +43,7 @@ struct ContentView: View {
             switch result {
             case let .success(urls):
                 guard let url = urls.first else { return }
-                Task { await viewModel.recognizeImage(at: url) }
+                viewModel.recognizeImage(at: url)
             case let .failure(error):
                 viewModel.errorMessage = error.localizedDescription
             }
@@ -67,7 +69,7 @@ private struct InputPanel: View {
                     Text($0.rawValue).tag($0)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(SegmentedPickerStyle())
 
             if viewModel.selectedInputMode == .type {
                 TextEditor(text: $viewModel.problem)
@@ -114,7 +116,7 @@ private struct InputPanel: View {
             }
 
             Button {
-                Task { await viewModel.solve() }
+                viewModel.solve()
             } label: {
                 HStack {
                     if viewModel.isWorking {

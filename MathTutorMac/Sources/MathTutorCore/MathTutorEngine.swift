@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MathTutorEngine: Sendable {
+public struct MathTutorEngine {
     public init() {}
 
     public func solve(_ rawProblem: String) throws -> MathSolution {
@@ -197,7 +197,10 @@ public struct MathTutorEngine: Sendable {
             let rhs = try polynomialCoefficients(right)
             switch operatorName {
             case "+", "-":
-                return (0...2).map { operatorName == "+" ? lhs[$0] + rhs[$0] : lhs[$0] - rhs[$0] }
+                if operatorName == "+" {
+                    return (0...2).map { lhs[$0] + rhs[$0] }
+                }
+                return (0...2).map { lhs[$0] - rhs[$0] }
             case "*":
                 return try multiplyPolynomials(lhs, rhs)
             case "/":
