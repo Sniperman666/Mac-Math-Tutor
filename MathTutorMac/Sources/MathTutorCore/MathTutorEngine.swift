@@ -32,17 +32,17 @@ public struct MathTutorEngine: Sendable {
         let variables = expression.variables
         if variables.isEmpty {
             let angleUnit: AngleUnit = lower.contains("degrees") || lower.contains("degree") ? .degrees : .radians
-            let result = try expression.evaluate([:], angleUnit: angleUnit)
+            var steps: [SolutionStep] = [
+                .init(title: "Read the expression", explanation: "Translate the problem into mathematical notation.", expression: expression.rendered)
+            ]
+            let result = try evaluateWithSteps(expression, angleUnit: angleUnit, steps: &steps)
             let subject = containsAny(lower, ["sin", "cos", "tan"]) ? "Trigonometry" : "Arithmetic"
             let unitNote = subject == "Trigonometry" && angleUnit == .degrees ? "Angles are interpreted in degrees." : "No special assumptions are needed."
             return MathSolution(
                 originalProblem: problem,
                 subject: subject,
                 interpretation: "Evaluate \(expression.rendered). \(unitNote)",
-                steps: [
-                    .init(title: "Read the expression", explanation: "Translate the problem into mathematical notation.", expression: expression.rendered),
-                    .init(title: "Apply the operations", explanation: "Follow parentheses, exponents, multiplication/division, and addition/subtraction.", expression: "\(expression.rendered) = \(MathFormatting.number(result))")
-                ],
+                steps: steps,
                 answer: MathFormatting.number(result)
             )
         }
@@ -50,12 +50,67 @@ public struct MathTutorEngine: Sendable {
         throw MathTutorError.ambiguousInput("The expression contains \(names). Ask me to solve an equation, differentiate, or substitute values.")
     }
 
+    private func evaluateWithSteps(
+        _ expression: MathExpression,
+        angleUnit: AngleUnit,
+        steps: inout [SolutionStep]
+    ) throws -> Double {
+        switch expression {
+        case .number, .variable:
+            return try expression.evaluate([:], angleUnit: angleUnit)
+        case let .unary(operatorName, operand):
+            let value = try evaluateWithSteps(operand, angleUnit: angleUnit, steps: &steps)
+            let result = try MathExpression.unary(operatorName, .number(value)).evaluate()
+            steps.append(.init(
+                title: "Apply the sign",
+                explanation: operatorName == "-" ? "Change the sign of the value." : "Keep the value unchanged.",
+                expression: "\(operatorName)(\(MathFormatting.number(value))) = \(MathFormatting.number(result))"
+            ))
+            return result
+        case let .binary(operatorName, left, right):
+            let leftValue = try evaluateWithSteps(left, angleUnit: angleUnit, steps: &steps)
+            let rightValue = try evaluateWithSteps(right, angleUnit: angleUnit, steps: &steps)
+            let result = try MathExpression.binary(operatorName, .number(leftValue), .number(rightValue)).evaluate()
+            guard result.isFinite else {
+                throw MathTutorError.unsupported("This calculation does not have a finite real result.")
+            }
+            let explanation: String
+            switch operatorName {
+            case "+": explanation = "Add the two values."
+            case "-": explanation = "Subtract the second value from the first."
+            case "*": explanation = "Multiply the two values."
+            case "/": explanation = "Divide the first value by the second."
+            case "^": explanation = "Raise the base to the given power."
+            default: throw MathTutorError.unsupported("The operator \(operatorName) is not supported.")
+            }
+            steps.append(.init(
+                title: "Calculate",
+                explanation: explanation,
+                expression: "\(MathFormatting.number(leftValue)) \(operatorName) \(MathFormatting.number(rightValue)) = \(MathFormatting.number(result))"
+            ))
+            return result
+        case let .function(name, argument):
+            let value = try evaluateWithSteps(argument, angleUnit: angleUnit, steps: &steps)
+            let result = try MathExpression.function(name, .number(value)).evaluate([:], angleUnit: angleUnit)
+            guard result.isFinite else {
+                throw MathTutorError.unsupported("This calculation does not have a finite real result.")
+            }
+            let unit = ["sin", "cos", "tan"].contains(name) ? (angleUnit == .degrees ? " in degrees" : " in radians") : ""
+            steps.append(.init(
+                title: "Evaluate \(name)",
+                explanation: "Apply \(name) to the argument\(unit).",
+                expression: "\(name)(\(MathFormatting.number(value))) = \(MathFormatting.number(result))"
+            ))
+            return result
+        }
+    }
+
     private func solveEquation(_ problem: String) throws -> MathSolution {
         let sides = problem.components(separatedBy: "=")
         guard sides.count == 2 else {
             throw MathTutorError.ambiguousInput("Use one equals sign, for example 2x + 4 = 10.")
         }
-        let leftText = expandImplicitMultiplication(sides[0])
+        let leftText = expandImplicitMultiplication(extractExpression(from: sides[0].lowercased(), labels: ["solve"]))
         let rightText = expandImplicitMultiplication(sides[1])
         let left = try ExpressionParser.parse(leftText)
         let right = try ExpressionParser.parse(rightText)
@@ -63,18 +118,12 @@ public struct MathTutorEngine: Sendable {
         guard variables.isEmpty || (variables.count == 1 && variables.contains("x")) else {
             throw MathTutorError.unsupported("Equations in this version support one variable named x.")
         }
-        let f: (Double) throws -> Double = { x in
-            try left.evaluate(["x": x]) - right.evaluate(["x": x])
-        }
-        let atMinusOne = try f(-1)
-        let atZero = try f(0)
-        let atOne = try f(1)
-        let a = (atMinusOne + atOne - 2 * atZero) / 2
-        let b = (atOne - atMinusOne) / 2
-        let c = atZero
-        let thirdCheck = try f(2)
-        let quadraticPrediction = 4 * a + 2 * b + c
-        if abs(a) > 1e-9 && abs(thirdCheck - quadraticPrediction) < 1e-6 {
+        let leftCoefficients = try polynomialCoefficients(left)
+        let rightCoefficients = try polynomialCoefficients(right)
+        let c = leftCoefficients[0] - rightCoefficients[0]
+        let b = leftCoefficients[1] - rightCoefficients[1]
+        let a = leftCoefficients[2] - rightCoefficients[2]
+        if a != 0 {
             let discriminant = b * b - 4 * a * c
             guard discriminant >= -1e-10 else {
                 return MathSolution(
@@ -98,56 +147,157 @@ public struct MathTutorEngine: Sendable {
                 interpretation: "Solve the quadratic in standard form.",
                 steps: [
                     .init(title: "Move everything to one side", explanation: "Subtract the right side from the left side.", expression: "\(MathFormatting.number(a))x² + \(MathFormatting.number(b))x + \(MathFormatting.number(c)) = 0"),
-                    .init(title: "Find the discriminant", explanation: "Use Δ = b² - 4ac.", expression: "Δ = \(MathFormatting.number(discriminant))"),
-                    .init(title: "Use the quadratic formula", explanation: "Substitute a, b, and the discriminant into x = (-b ± √Δ) / 2a.", expression: roots.map(MathFormatting.number).joined(separator: " or "))
+                    .init(title: "Find the discriminant", explanation: "Use Δ = b² - 4ac.", expression: "Δ = (\(MathFormatting.number(b)))² - 4(\(MathFormatting.number(a)))(\(MathFormatting.number(c))) = \(MathFormatting.number(discriminant))"),
+                    .init(title: "Use the quadratic formula", explanation: "Substitute a, b, and Δ into x = (-b ± √Δ) / (2a).", expression: "x = (-\(MathFormatting.number(b)) ± √\(MathFormatting.number(discriminant))) / (2 · \(MathFormatting.number(a)))"),
+                    .init(title: "Calculate the real solutions", explanation: "Evaluate the plus and minus cases.", expression: "x = \(roots.map(MathFormatting.number).joined(separator: " or "))")
                 ],
                 answer: roots.map(MathFormatting.number).joined(separator: ", ")
             )
         }
-        let slope = atOne - atZero
-        guard abs(slope) > 1e-10 else {
+        let slope = b
+        guard slope != 0 else {
             return MathSolution(
                 originalProblem: problem,
                 subject: "Algebra",
                 interpretation: "The variable cancels out.",
                 steps: [.init(title: "Compare constants", explanation: "Both sides have no x-dependent difference.", expression: "\(left.rendered) = \(right.rendered)")],
-                answer: abs(atZero) < 1e-10 ? "All real numbers" : "No solution"
+                answer: c == 0 ? "All real numbers" : "No solution"
             )
         }
-        let linearPredictionAtTwo = 2 * slope + atZero
-        guard abs(thirdCheck - linearPredictionAtTwo) < 1e-6,
-              abs(try f(-2) - (-2 * slope + atZero)) < 1e-6 else {
-            throw MathTutorError.unsupported("This expression is not linear or quadratic. The local solver supports linear and quadratic equations in x.")
-        }
-        let result = -atZero / slope
+        let result = -c / slope
         return MathSolution(
             originalProblem: problem,
             subject: "Algebra",
             interpretation: "Solve a linear equation in x.",
             steps: [
-                .init(title: "Combine like terms", explanation: "Subtract the right side from the left.", expression: "\(MathFormatting.number(slope))x + \(MathFormatting.number(atZero)) = 0"),
-                .init(title: "Isolate the variable term", explanation: "Subtract the constant from both sides.", expression: "\(MathFormatting.number(slope))x = \(MathFormatting.number(-atZero))"),
-                .init(title: "Divide both sides", explanation: "Divide by the coefficient of x.", expression: "x = \(MathFormatting.number(-atZero)) / \(MathFormatting.number(slope))")
+                .init(title: "Combine like terms", explanation: "Subtract the right side from the left.", expression: "\(MathFormatting.number(slope))x + \(MathFormatting.number(c)) = 0"),
+                .init(title: "Isolate the variable term", explanation: "Subtract the constant from both sides.", expression: "\(MathFormatting.number(slope))x = \(MathFormatting.number(-c))"),
+                .init(title: "Divide both sides", explanation: "Divide by the coefficient of x.", expression: "x = \(MathFormatting.number(-c)) / \(MathFormatting.number(slope)) = \(MathFormatting.number(result))")
             ],
             answer: "x = \(MathFormatting.number(result))"
         )
     }
 
+    private func polynomialCoefficients(_ expression: MathExpression) throws -> [Double] {
+        if expression.variables.isEmpty {
+            let value = try expression.evaluate()
+            guard value.isFinite else {
+                throw MathTutorError.unsupported("The equation contains a non-finite value.")
+            }
+            return [value, 0, 0]
+        }
+        switch expression {
+        case .variable("x"):
+            return [0, 1, 0]
+        case let .unary(sign, operand):
+            let coefficients = try polynomialCoefficients(operand)
+            return coefficients.map { sign == "-" ? -$0 : $0 }
+        case let .binary(operatorName, left, right):
+            let lhs = try polynomialCoefficients(left)
+            let rhs = try polynomialCoefficients(right)
+            switch operatorName {
+            case "+", "-":
+                return (0...2).map { operatorName == "+" ? lhs[$0] + rhs[$0] : lhs[$0] - rhs[$0] }
+            case "*":
+                return try multiplyPolynomials(lhs, rhs)
+            case "/":
+                guard rhs[1] == 0, rhs[2] == 0, rhs[0] != 0 else {
+                    throw MathTutorError.unsupported("Equations with a variable in the denominator are not supported.")
+                }
+                return lhs.map { $0 / rhs[0] }
+            case "^":
+                guard rhs[1] == 0, rhs[2] == 0, rhs[0] >= 0, rhs[0] <= 2,
+                      rhs[0].rounded() == rhs[0] else {
+                    throw MathTutorError.unsupported("Only nonnegative integer powers up to 2 are supported in equations.")
+                }
+                var result = [1.0, 0, 0]
+                for _ in 0..<Int(rhs[0]) {
+                    result = try multiplyPolynomials(result, lhs)
+                }
+                return result
+            default:
+                throw MathTutorError.unsupported("This equation is not a supported polynomial.")
+            }
+        default:
+            throw MathTutorError.unsupported("Only linear and quadratic polynomial equations in x are supported.")
+        }
+    }
+
+    private func multiplyPolynomials(_ lhs: [Double], _ rhs: [Double]) throws -> [Double] {
+        var result = [0.0, 0, 0]
+        for i in 0...2 {
+            for j in 0...2 {
+                let product = lhs[i] * rhs[j]
+                if i + j > 2 {
+                    guard product == 0 else {
+                        throw MathTutorError.unsupported("Only linear and quadratic polynomial equations in x are supported.")
+                    }
+                } else {
+                    result[i + j] += product
+                }
+            }
+        }
+        guard result.allSatisfy(\.isFinite) else {
+            throw MathTutorError.unsupported("The equation's coefficients are too large to calculate.")
+        }
+        return result
+    }
+
     private func differentiate(_ problem: String) throws -> MathSolution {
-        let expressionText = extractExpression(from: problem.lowercased(), labels: ["differentiate", "derivative of"])
+        let lower = problem.lowercased()
+        let angleUnit: AngleUnit = lower.contains("degree") ? .degrees : .radians
+        let expressionText = extractExpression(from: lower, labels: ["differentiate", "derivative of"])
         let expression = try ExpressionParser.parse(expandImplicitMultiplication(expressionText))
-        let derivative = try expression.differentiated(withRespectTo: "x").simplified()
+        let derivative = try expression.differentiated(withRespectTo: "x", angleUnit: angleUnit).simplified(angleUnit: angleUnit)
+        let unitName = angleUnit == .degrees ? "degrees" : "radians"
+        var steps: [SolutionStep] = [
+            .init(title: "Identify the expression", explanation: "Differentiate with respect to x. Trigonometric arguments are in \(unitName).", expression: "f(x) = \(expression.rendered)")
+        ]
+        try appendDerivativeSteps(for: expression, angleUnit: angleUnit, to: &steps)
+        steps.append(.init(title: "Simplify", explanation: "Simplify the resulting derivative.", expression: "f′(x) = \(derivative.rendered)"))
         return MathSolution(
             originalProblem: problem,
             subject: "Calculus",
             interpretation: "Differentiate \(expression.rendered) with respect to x.",
-            steps: [
-                .init(title: "Identify the rule", explanation: "Use sum, product, quotient, power, or chain rules for each part.", expression: expression.rendered),
-                .init(title: "Differentiate each term", explanation: "Differentiate with respect to x, multiplying by inner derivatives where needed.", expression: derivative.rendered),
-                .init(title: "Simplify", explanation: "Remove zero terms and combine simple factors.", expression: "f′(x) = \(derivative.rendered)")
-            ],
+            steps: steps,
             answer: "f′(x) = \(derivative.rendered)"
         )
+    }
+
+    private func appendDerivativeSteps(for expression: MathExpression, angleUnit: AngleUnit, to steps: inout [SolutionStep]) throws {
+        let explanation: String
+        switch expression {
+        case .number:
+            explanation = "The derivative of a constant is 0."
+        case let .variable(name):
+            explanation = name == "x" ? "The derivative of x with respect to x is 1." : "This value is constant with respect to x."
+        case let .unary(_, operand):
+            try appendDerivativeSteps(for: operand, angleUnit: angleUnit, to: &steps)
+            explanation = "A sign carries through when differentiating."
+        case let .binary(operatorName, left, right):
+            try appendDerivativeSteps(for: left, angleUnit: angleUnit, to: &steps)
+            if operatorName != "^" {
+                try appendDerivativeSteps(for: right, angleUnit: angleUnit, to: &steps)
+            }
+            switch operatorName {
+            case "+", "-": explanation = "Differentiate each term, keeping the same addition or subtraction."
+            case "*": explanation = "Use the product rule: (uv)′ = u′v + uv′."
+            case "/": explanation = "Use the quotient rule: (u/v)′ = (u′v - uv′)/v²."
+            case "^": explanation = "Use the power rule and multiply by the derivative of the base."
+            default: throw MathTutorError.unsupported("The derivative rule for \(operatorName) is not supported.")
+            }
+        case let .function(name, argument):
+            try appendDerivativeSteps(for: argument, angleUnit: angleUnit, to: &steps)
+            let degreeNote = angleUnit == .degrees && ["sin", "cos", "tan"].contains(name.lowercased())
+                ? " Multiply by π/180 for degrees." : ""
+            explanation = "Apply the derivative rule for \(name), then multiply by the derivative of its argument (the chain rule).\(degreeNote)"
+        }
+        let derivative = try expression.differentiated(withRespectTo: "x", angleUnit: angleUnit)
+        steps.append(.init(
+            title: "Differentiate \(expression.rendered)",
+            explanation: explanation,
+            expression: "d/dx \(expression.rendered) = \(derivative.rendered)"
+        ))
     }
 
     private func integrate(_ problem: String) throws -> MathSolution {

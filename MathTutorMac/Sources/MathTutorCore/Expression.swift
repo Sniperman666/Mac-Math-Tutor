@@ -33,11 +33,16 @@ public indirect enum MathExpression: Equatable, Sendable {
             case "-": return leftValue - rightValue
             case "*": return leftValue * rightValue
             case "/":
-                guard abs(rightValue) > Double.ulpOfOne else {
+                guard rightValue != 0 else {
                     throw MathTutorError.unsupported("Division by zero is undefined.")
                 }
                 return leftValue / rightValue
-            case "^": return pow(leftValue, rightValue)
+            case "^":
+                let result = pow(leftValue, rightValue)
+                guard result.isFinite else {
+                    throw MathTutorError.unsupported("This power does not have a finite real value.")
+                }
+                return result
             default: throw MathTutorError.unsupported("The operator \(operatorName) is not supported.")
             }
         case let .function(name, argument):
@@ -46,7 +51,11 @@ public indirect enum MathExpression: Equatable, Sendable {
             switch name.lowercased() {
             case "sin": return sin(radians)
             case "cos": return cos(radians)
-            case "tan": return tan(radians)
+            case "tan":
+                guard abs(cos(radians)) > 1e-15 else {
+                    throw MathTutorError.unsupported("The tangent is undefined at this angle.")
+                }
+                return tan(radians)
             case "sqrt":
                 guard value >= 0 else { throw MathTutorError.unsupported("The square root needs a nonnegative value.") }
                 return sqrt(value)
@@ -74,50 +83,50 @@ public indirect enum MathExpression: Equatable, Sendable {
         }
     }
 
-    public func differentiated(withRespectTo variable: String) throws -> MathExpression {
+    public func differentiated(withRespectTo variable: String, angleUnit: AngleUnit = .radians) throws -> MathExpression {
         switch self {
         case .number:
             return .number(0)
         case let .variable(name):
             return name == variable ? .number(1) : .number(0)
         case let .unary(operatorName, operand):
-            return .unary(operatorName, try operand.differentiated(withRespectTo: variable))
+            return .unary(operatorName, try operand.differentiated(withRespectTo: variable, angleUnit: angleUnit))
         case let .binary("+", left, right):
-            return .binary("+", try left.differentiated(withRespectTo: variable), try right.differentiated(withRespectTo: variable))
+            return .binary("+", try left.differentiated(withRespectTo: variable, angleUnit: angleUnit), try right.differentiated(withRespectTo: variable, angleUnit: angleUnit))
         case let .binary("-", left, right):
-            return .binary("-", try left.differentiated(withRespectTo: variable), try right.differentiated(withRespectTo: variable))
+            return .binary("-", try left.differentiated(withRespectTo: variable, angleUnit: angleUnit), try right.differentiated(withRespectTo: variable, angleUnit: angleUnit))
         case let .binary("*", left, right):
             return .binary(
                 "+",
-                .binary("*", try left.differentiated(withRespectTo: variable), right),
-                .binary("*", left, try right.differentiated(withRespectTo: variable))
+                .binary("*", try left.differentiated(withRespectTo: variable, angleUnit: angleUnit), right),
+                .binary("*", left, try right.differentiated(withRespectTo: variable, angleUnit: angleUnit))
             )
         case let .binary("/", left, right):
             return .binary(
                 "/",
                 .binary(
                     "-",
-                    .binary("*", try left.differentiated(withRespectTo: variable), right),
-                    .binary("*", left, try right.differentiated(withRespectTo: variable))
+                    .binary("*", try left.differentiated(withRespectTo: variable, angleUnit: angleUnit), right),
+                    .binary("*", left, try right.differentiated(withRespectTo: variable, angleUnit: angleUnit))
                 ),
                 .binary("^", right, .number(2))
             )
         case let .binary("^", base, exponent) where exponent.variables.isEmpty:
             guard base.variables.contains(variable) else { return .number(0) }
-            let exponentValue = try exponent.evaluate()
+            let exponentValue = try exponent.evaluate([:], angleUnit: angleUnit)
             return .binary(
                 "*",
                 .binary("*", exponent, .binary("^", base, .number(exponentValue - 1))),
-                try base.differentiated(withRespectTo: variable)
+                try base.differentiated(withRespectTo: variable, angleUnit: angleUnit)
             )
         case .binary("^", _, _):
             throw MathTutorError.unsupported("The local derivative engine does not support a variable exponent.")
         case let .binary(operatorName, _, _):
             throw MathTutorError.unsupported("The local derivative engine cannot apply the \(operatorName) operator.")
         case let .function(name, argument):
-            let inner = try argument.differentiated(withRespectTo: variable)
+            let inner = try argument.differentiated(withRespectTo: variable, angleUnit: angleUnit)
             let outer: MathExpression
-            switch name {
+            switch name.lowercased() {
             case "sin": outer = .function("cos", argument)
             case "cos": outer = .unary("-", .function("sin", argument))
             case "tan": outer = .binary("+", .number(1), .binary("^", .function("tan", argument), .number(2)))
@@ -126,7 +135,13 @@ public indirect enum MathExpression: Equatable, Sendable {
             default:
                 throw MathTutorError.unsupported("The function \(name) is not supported for differentiation.")
             }
-            return .binary("*", outer, inner)
+            let scaledOuter: MathExpression
+            if angleUnit == .degrees && ["sin", "cos", "tan"].contains(name.lowercased()) {
+                scaledOuter = .binary("*", .binary("/", .variable("pi"), .number(180)), outer)
+            } else {
+                scaledOuter = outer
+            }
+            return .binary("*", scaledOuter, inner)
         }
     }
 
@@ -145,8 +160,8 @@ public indirect enum MathExpression: Equatable, Sendable {
         }
     }
 
-    public func simplified() -> MathExpression {
-        let simplifyOperand: (MathExpression) -> MathExpression = { $0.simplified() }
+    public func simplified(angleUnit: AngleUnit = .radians) -> MathExpression {
+        let simplifyOperand: (MathExpression) -> MathExpression = { $0.simplified(angleUnit: angleUnit) }
         switch self {
         case .number, .variable:
             return self
@@ -160,7 +175,7 @@ public indirect enum MathExpression: Equatable, Sendable {
             let left = simplifyOperand(rawLeft)
             let right = simplifyOperand(rawRight)
             if case .number = left, case .number = right,
-               let value = try? MathExpression.binary(operatorName, left, right).evaluate() {
+               let value = try? MathExpression.binary(operatorName, left, right).evaluate([:], angleUnit: angleUnit) {
                 return .number(value)
             }
             switch operatorName {
@@ -169,13 +184,14 @@ public indirect enum MathExpression: Equatable, Sendable {
                 if right == .number(0) { return left }
             case "-":
                 if right == .number(0) { return left }
-                if left == right { return .number(0) }
+                if left == right && left.isDefinedForAllRealVariables { return .number(0) }
             case "*":
-                if left == .number(0) || right == .number(0) { return .number(0) }
+                if left == .number(0) && right.isDefinedForAllRealVariables { return .number(0) }
+                if right == .number(0) && left.isDefinedForAllRealVariables { return .number(0) }
                 if left == .number(1) { return right }
                 if right == .number(1) { return left }
             case "^":
-                if right == .number(0) { return .number(1) }
+                if right == .number(0) && left.isDefinedForAllRealVariables { return .number(1) }
                 if right == .number(1) { return left }
             default:
                 break
@@ -184,10 +200,24 @@ public indirect enum MathExpression: Equatable, Sendable {
         case let .function(name, rawArgument):
             let argument = simplifyOperand(rawArgument)
             if case .number = argument,
-               let value = try? MathExpression.function(name, argument).evaluate() {
+               let value = try? MathExpression.function(name, argument).evaluate([:], angleUnit: angleUnit) {
                 return .number(value)
             }
             return .function(name, argument)
+        }
+    }
+
+    private var isDefinedForAllRealVariables: Bool {
+        switch self {
+        case .number, .variable:
+            return true
+        case let .unary(_, operand):
+            return operand.isDefinedForAllRealVariables
+        case let .binary(operatorName, left, right):
+            return ["+", "-", "*"].contains(operatorName)
+                && left.isDefinedForAllRealVariables && right.isDefinedForAllRealVariables
+        case .function:
+            return false
         }
     }
 }

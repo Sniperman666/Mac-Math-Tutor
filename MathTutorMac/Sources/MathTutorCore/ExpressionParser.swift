@@ -54,7 +54,7 @@ public struct ExpressionParser {
         let character = source[index]
         if character == "+" || character == "-" {
             index += 1
-            return .unary(String(character), try parsePrefix())
+            return .unary(String(character), try parseExpression(minPrecedence: 3))
         }
         if character == "(" {
             index += 1
@@ -67,7 +67,7 @@ public struct ExpressionParser {
             return expression
         }
         if character.isNumber || character == "." {
-            return parseNumber()
+            return try parseNumber()
         }
         if character.isLetter {
             let name = parseIdentifier()
@@ -87,14 +87,16 @@ public struct ExpressionParser {
         throw MathTutorError.invalidExpression(String(source))
     }
 
-    private mutating func parseNumber() -> MathExpression {
+    private mutating func parseNumber() throws -> MathExpression {
         let start = index
         var hasDecimal = false
         while index < source.count, source[index].isNumber || (source[index] == "." && !hasDecimal) {
             if source[index] == "." { hasDecimal = true }
             index += 1
         }
-        let value = Double(String(source[start..<index])) ?? 0
+        guard let value = Double(String(source[start..<index])), value.isFinite else {
+            throw MathTutorError.invalidExpression(String(source))
+        }
         return .number(value)
     }
 

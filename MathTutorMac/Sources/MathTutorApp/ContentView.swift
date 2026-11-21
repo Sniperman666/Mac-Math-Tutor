@@ -58,7 +58,7 @@ private struct InputPanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Math Tutor")
                     .font(.largeTitle.bold())
-                Text("Understand the method. Check each step. Keep it local.")
+                Text("Enter a problem to get an answer and worked explanation, locally.")
                     .foregroundColor(.secondary)
             }
 
@@ -120,7 +120,7 @@ private struct InputPanel: View {
                     if viewModel.isWorking {
                         ProgressView().controlSize(.small)
                     }
-                    Text(viewModel.isWorking ? "Working…" : "Show me the steps")
+                    Text(viewModel.isWorking ? "Working…" : "Solve and explain")
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -178,6 +178,8 @@ private struct SolutionPanel: View {
                         }
                         Text(solution.interpretation)
                             .font(.title2.weight(.semibold))
+                        Text("Problem: \(solution.originalProblem)")
+                            .foregroundColor(.secondary)
                         Divider()
                         ForEach(solution.steps.indices, id: \.self) { index in
                             StepCard(index: index + 1, step: solution.steps[index])
@@ -204,7 +206,7 @@ private struct SolutionPanel: View {
                         .foregroundColor(.secondary)
                     Text("Your worked solution appears here")
                         .font(.title2.weight(.semibold))
-                    Text("Enter an equation or a supported math question, then choose “Show me the steps.”")
+                    Text("Enter an equation or a supported math question, then choose “Solve and explain.”")
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 430)

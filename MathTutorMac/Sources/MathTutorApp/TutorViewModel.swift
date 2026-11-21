@@ -19,6 +19,7 @@ final class TutorViewModel: ObservableObject {
     func solve() async {
         errorMessage = nil
         isWorking = true
+        solution = nil
         defer { isWorking = false }
         do {
             let newSolution = try engine.solve(problem)
@@ -28,6 +29,7 @@ final class TutorViewModel: ObservableObject {
                 history.removeLast()
             }
         } catch {
+            solution = nil
             errorMessage = error.localizedDescription
         }
     }

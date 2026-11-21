@@ -2,6 +2,8 @@
 
 An offline-first native SwiftUI tutor for math. It produces numbered, copyable work for supported arithmetic, algebra, geometry, trigonometry, calculus, and statistics problems.
 
+Enter a supported problem and select **Solve and explain** to see its answer and all available worked steps immediately; you do not need to enter your own steps. Arithmetic expressions show the intermediate calculations. The local solver does not understand every question, and explanations for some topics are less detailed than others; check results before relying on them.
+
 ## macOS requirement
 
 - Runs on **macOS Big Sur 11 or newer**.
@@ -49,6 +51,7 @@ swift test
 
 - Equations support one variable named `x`, with linear or quadratic expressions.
 - Differentiation supports sums, products, quotients, powers, and common supported functions.
+- Trigonometric differentiation uses radians by default; include `degrees` to use degree-based derivatives.
 - Integration currently supports a single power term, such as `3x^2`.
 - Statistics treats data as a complete population.
 - Geometry prompts currently cover circle area/circumference, rectangle/triangle area, and a right-triangle hypotenuse.
